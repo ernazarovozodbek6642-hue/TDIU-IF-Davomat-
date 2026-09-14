@@ -21,6 +21,10 @@ class SheetsSettingsState(StatesGroup):
     entering_spreadsheet_id = State()
 
 
+class RoomRefreshSettingsState(StatesGroup):
+    entering_interval = State()
+
+
 class AdminEditState(StatesGroup):
     picking_date = State()
     picking_para = State()

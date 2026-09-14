@@ -14,8 +14,11 @@ from test_admin_access import AsyncSessionAdapter, AdminAccessTests
 from utils.db_api import db
 from utils.db_api.models import BotSetting, BotAdmin
 from utils.sheet_settings import parse_spreadsheet_id
-from utils.sheets import validate_spreadsheet_access, update_sheets_attendance
-from handlers.admin import sheets_id_entered, router
+from utils.sheets import (
+    validate_spreadsheet_access, update_sheets_attendance, update_room_column,
+    daily_sheet_group_names,
+)
+from handlers.admin import sheets_id_entered, room_refresh_interval_entered, router
 from states.states import SheetsSettingsState
 from data.constants import HEADERS
 
@@ -55,6 +58,28 @@ class SheetSettingsTests(unittest.IsolatedAsyncioTestCase):
         with Session(self.engine) as s:
             self.assertEqual(s.get(BotSetting, 'spreadsheet_id').updated_by, 222)
 
+    async def test_room_refresh_interval_is_admin_controlled_and_persistent(self):
+        self.assertEqual(await db.get_room_refresh_minutes(), 60)
+        await db.set_room_refresh_minutes(90, updated_by=111)
+        self.assertEqual(await db.get_room_refresh_minutes(), 90)
+        await db.add_bot_admin(222, added_by=111)
+        await db.set_room_refresh_minutes(0, updated_by=222)
+        self.assertEqual(await db.get_room_refresh_minutes(), 0)
+        with self.assertRaises(PermissionError):
+            await db.set_room_refresh_minutes(30, updated_by=999)
+        for invalid in (-1, 1, 1441):
+            with self.assertRaises(ValueError):
+                await db.set_room_refresh_minutes(invalid, updated_by=111)
+
+    async def test_room_refresh_handler_validates_and_saves_minutes(self):
+        with patch.object(Message, 'answer', new=AsyncMock()) as answer:
+            await room_refresh_interval_entered(self.message('4'), self.state)
+            self.assertEqual(await db.get_room_refresh_minutes(), 60)
+            self.assertIn('5–1440', answer.call_args.args[0])
+            await room_refresh_interval_entered(self.message('75'), self.state)
+        self.assertEqual(await db.get_room_refresh_minutes(), 75)
+        self.assertIsNone(await self.state.get_state())
+
     async def test_non_admin_cannot_change_setting_or_open_flow(self):
         with self.assertRaises(PermissionError):
             await db.set_spreadsheet_id(NEW, updated_by=999)
@@ -85,6 +110,16 @@ class SheetSettingsTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SheetValidationTests(unittest.TestCase):
+    def test_daily_sheet_groups_are_read_only_from_column_c(self):
+        client = MagicMock()
+        sheet = client.open_by_key.return_value.worksheet.return_value
+        sheet.get.return_value = [['I-900/26'], [''], ['I-901/26'], ['I-900/26']]
+        with patch('utils.sheets._get_gspread_client', return_value=(client, MagicMock())):
+            groups = daily_sheet_group_names(datetime(2026, 9, 14), NEW)
+        self.assertEqual(groups, {'I-900/26', 'I-901/26'})
+        sheet.get.assert_called_once_with('C3:C')
+        sheet.batch_update.assert_not_called()
+
     def test_id_and_urls(self):
         for value in (NEW, f'https://docs.google.com/spreadsheets/d/{NEW}/edit?usp=sharing#gid=0',
                       f'https://docs.google.com/spreadsheets/u/0/d/{NEW}/edit'):
@@ -122,6 +157,31 @@ class SheetValidationTests(unittest.TestCase):
         updates = sheet.batch_update.call_args.args[0]
         self.assertEqual(len(updates), 1)
         self.assertEqual(updates[0]['range'], 'M3')
+
+    def test_room_refresh_updates_only_g_when_group_and_period_match(self):
+        client = MagicMock()
+        sheet = client.open_by_key.return_value.worksheet.return_value
+        sheet.get.return_value = [
+            ['I-900/26', 'Teacher', 'Fan', 'Kafedra', '1/101', '1'],
+            ['I-901/26', 'Teacher', 'Fan', 'Kafedra', '2/202', '1'],
+            ['I-900/26', 'Teacher', 'Fan', 'Kafedra', '3/303', '2'],
+        ]
+        lessons = [
+            {'Guruh': 'I-900/26', 'Juft-lik': '1', 'Xona': '4/404',
+             "Professor-o'qituvchining F.I.Sh": 'Teacher', 'Fan nomi': 'Fan'},
+            {'Guruh': 'I-902/26', 'Juft-lik': '1', 'Xona': '5/505',
+             "Professor-o'qituvchining F.I.Sh": 'Teacher', 'Fan nomi': 'Fan'},
+        ]
+        with patch('utils.sheets._get_gspread_client', return_value=(client, MagicMock())):
+            result = update_room_column(lessons, datetime(2026, 9, 14), NEW)
+
+        sheet.get.assert_called_once_with('C3:H')
+        sheet.batch_update.assert_called_once_with(
+            [{'range': 'G3', 'values': [['4/404']]}], value_input_option='RAW'
+        )
+        self.assertEqual(result['changed'], 1)
+        self.assertEqual(result['matched'], 1)
+        self.assertEqual(result['unmatched'], 2)
 
 
 if __name__ == '__main__':

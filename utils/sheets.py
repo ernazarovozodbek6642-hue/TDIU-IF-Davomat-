@@ -70,6 +70,25 @@ def daily_sheet_exists(target_date: datetime, spreadsheet_id: str | None = None)
     return bool(existing_daily_sheet_names([target_date], spreadsheet_id))
 
 
+def daily_sheet_group_names(
+    target_date: datetime,
+    spreadsheet_id: str | None = None,
+) -> set[str]:
+    """Read the distinct group names currently present in column C of a daily sheet."""
+    client, _ = _get_gspread_client()
+    spreadsheet = client.open_by_key(spreadsheet_id or SPREADSHEET_ID)
+    sheet_name = f"{target_date.strftime('%d.%m')} {DAYS_UZ[target_date.weekday()]}"
+    try:
+        sheet = spreadsheet.worksheet(sheet_name)
+    except gspread.WorksheetNotFound:
+        return set()
+    return {
+        str(row[0]).strip()
+        for row in sheet.get('C3:C')
+        if row and str(row[0]).strip()
+    }
+
+
 def existing_daily_sheet_names(
     target_dates: list[datetime],
     spreadsheet_id: str | None = None,
@@ -360,6 +379,75 @@ def upload_to_sheets(lessons: list, target_date: datetime, spreadsheet_id: str |
 
     sheets_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
     return sheets_url, sheet_name
+
+
+def update_room_column(
+    lessons: list,
+    target_date: datetime,
+    spreadsheet_id: str | None = None,
+) -> dict[str, int]:
+    """Update only column G for rows whose column C group and column H period match."""
+    client, _ = _get_gspread_client()
+    spreadsheet = client.open_by_key(spreadsheet_id or SPREADSHEET_ID)
+    sheet_name = f"{target_date.strftime('%d.%m')} {DAYS_UZ[target_date.weekday()]}"
+    sheet = spreadsheet.worksheet(sheet_name)
+
+    by_group_period: dict[tuple[str, str], list[dict]] = {}
+    for lesson in lessons:
+        group = str(lesson.get('Guruh') or '').strip().casefold()
+        period = str(lesson.get('Juft-lik') or '').strip()
+        if group and period:
+            by_group_period.setdefault((group, period), []).append(lesson)
+
+    rows = sheet.get('C3:H')
+    updates = []
+    matched = unchanged = unmatched = ambiguous = 0
+    for row_number, row in enumerate(rows, start=3):
+        padded = list(row) + [''] * (6 - len(row))
+        group, teacher, subject, _, current_room, period = padded[:6]
+        key = (str(group).strip().casefold(), str(period).strip())
+        candidates = by_group_period.get(key, [])
+        if not candidates:
+            unmatched += 1
+            continue
+
+        rooms = {str(item.get('Xona') or '').strip() for item in candidates}
+        if len(rooms) > 1:
+            subject_matches = [
+                item for item in candidates
+                if str(item.get('Fan nomi') or '').strip().casefold() == str(subject).strip().casefold()
+            ]
+            if subject_matches:
+                candidates = subject_matches
+                rooms = {str(item.get('Xona') or '').strip() for item in candidates}
+        if len(rooms) > 1:
+            teacher_matches = [
+                item for item in candidates
+                if str(item.get("Professor-o'qituvchining F.I.Sh") or '').strip().casefold()
+                == str(teacher).strip().casefold()
+            ]
+            if teacher_matches:
+                rooms = {str(item.get('Xona') or '').strip() for item in teacher_matches}
+        if len(rooms) != 1:
+            ambiguous += 1
+            continue
+
+        new_room = rooms.pop()
+        matched += 1
+        if str(current_room).strip() == new_room:
+            unchanged += 1
+            continue
+        updates.append({'range': f'G{row_number}', 'values': [[new_room]]})
+
+    if updates:
+        sheet.batch_update(updates, value_input_option='RAW')
+    return {
+        'changed': len(updates),
+        'matched': matched,
+        'unchanged': unchanged,
+        'unmatched': unmatched,
+        'ambiguous': ambiguous,
+    }
 
 
 def update_sheets_attendance(

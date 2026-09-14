@@ -64,6 +64,37 @@ async def set_spreadsheet_id(spreadsheet_id: str, updated_by: int) -> None:
         await s.commit()
 
 
+ROOM_REFRESH_DEFAULT_MINUTES = 60
+
+
+async def get_room_refresh_minutes() -> int:
+    """Return the admin-selected room refresh interval; zero disables it."""
+    async with Session() as s:
+        setting = await s.get(BotSetting, 'room_refresh_minutes')
+        if setting is None:
+            return ROOM_REFRESH_DEFAULT_MINUTES
+        try:
+            value = int(setting.value)
+        except (TypeError, ValueError):
+            return ROOM_REFRESH_DEFAULT_MINUTES
+        return value if value == 0 or 5 <= value <= 1440 else ROOM_REFRESH_DEFAULT_MINUTES
+
+
+async def set_room_refresh_minutes(minutes: int, updated_by: int) -> None:
+    """Persist an interval in minutes. Only admins may change this setting."""
+    if minutes != 0 and not 5 <= minutes <= 1440:
+        raise ValueError('Oraliq 5–1440 daqiqa bo‘lishi yoki o‘chirish uchun 0 bo‘lishi kerak')
+    async with Session() as s:
+        if updated_by not in ADMINS and await s.get(BotAdmin, updated_by) is None:
+            raise PermissionError('Faqat admin xona yangilanish vaqtini o‘zgartira oladi')
+        await s.execute(insert(BotSetting).values(
+            key='room_refresh_minutes', value=str(minutes), updated_by=updated_by
+        ).on_conflict_do_update(index_elements=[BotSetting.key], set_={
+            'value': str(minutes), 'updated_by': updated_by
+        }))
+        await s.commit()
+
+
 async def add_bot_admin(telegram_id: int, added_by: int) -> bool:
     """Only an existing admin may grant access. False means already an admin."""
     if not isinstance(telegram_id, int) or isinstance(telegram_id, bool) or not 0 < telegram_id < 2**52:

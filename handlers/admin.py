@@ -8,13 +8,17 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from filters.role_filter import IsAdmin
-from states.states import AdminTutorState, AdminEditState, TutorAttendanceState, AddAdminState, SheetsSettingsState
+from states.states import (
+    AdminTutorState, AdminEditState, TutorAttendanceState, AddAdminState,
+    SheetsSettingsState, RoomRefreshSettingsState,
+)
 from utils.db_api.db import (
     get_all_tutors, get_tutor_by_id, add_tutor, delete_tutor,
     get_tutor_groups, assign_group_to_tutor, remove_group_from_tutor,
     get_paras_for_date, get_groups_for_date_and_paras,
     get_students_by_group, get_absent_students, add_bot_admin,
-    get_spreadsheet_id, set_spreadsheet_id, get_all_edupage_groups
+    get_spreadsheet_id, set_spreadsheet_id, get_all_edupage_groups,
+    get_room_refresh_minutes, set_room_refresh_minutes,
 )
 from utils.sheet_settings import parse_spreadsheet_id
 from utils.sheets import sheets_service_account_email, validate_spreadsheet_access
@@ -33,6 +37,43 @@ from utils.group_courses import groups_by_course
 router = Router()
 router.message.filter(IsAdmin())
 router.callback_query.filter(IsAdmin())
+
+
+@router.message(F.text == "🏫 Xonalarni yangilash")
+async def start_room_refresh_settings(message: Message, state: FSMContext):
+    await state.clear()
+    minutes = await get_room_refresh_minutes()
+    current = "o‘chirilgan" if minutes == 0 else f"har {minutes} daqiqada"
+    await state.set_state(RoomRefreshSettingsState.entering_interval)
+    await message.answer(
+        "🏫 <b>Xonalarni avtomatik yangilash</b>\n\n"
+        f"Joriy holat: <b>{current}</b>.\n\n"
+        "Yangi oraliqni daqiqada yuboring. Masalan, har soat uchun <code>60</code>.\n"
+        "Ruxsat etilgan oraliq: <code>5–1440</code>. O‘chirish uchun <code>0</code>.\n\n"
+        "Yangilash faqat C ustundagi guruh va H ustundagi para mos kelgan "
+        "qatorlarning G ustuniga yozadi.",
+        parse_mode='HTML', reply_markup=cancel_menu(),
+    )
+
+
+@router.message(RoomRefreshSettingsState.entering_interval)
+async def room_refresh_interval_entered(message: Message, state: FSMContext):
+    value = (message.text or '').strip()
+    if not value.isascii() or not value.isdigit():
+        await message.answer('❌ Daqiqani raqam bilan yuboring. Masalan: <code>60</code>.', parse_mode='HTML')
+        return
+    minutes = int(value)
+    if minutes != 0 and not 5 <= minutes <= 1440:
+        await message.answer('❌ Oraliq 5–1440 daqiqa bo‘lishi kerak. O‘chirish uchun 0 yuboring.')
+        return
+    await set_room_refresh_minutes(minutes, updated_by=message.from_user.id)
+    await state.clear()
+    result = "o‘chirildi" if minutes == 0 else f"har {minutes} daqiqada ishlaydi"
+    await message.answer(
+        f"✅ Xonalarni avtomatik yangilash <b>{result}</b>.\n\n"
+        "Sozlama bir daqiqa ichida kuchga kiradi. Faqat G ustuni yangilanadi.",
+        parse_mode='HTML', reply_markup=admin_menu(),
+    )
 
 
 @router.message(F.text == "⚙️ Sheets ID ni o'zgartirish")

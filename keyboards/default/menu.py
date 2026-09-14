@@ -10,6 +10,7 @@ def admin_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="📥 Import / Export (Excel)")],
             [KeyboardButton(text="➕ Admin qo'shish")],
             [KeyboardButton(text="⚙️ Sheets ID ni o'zgartirish")],
+            [KeyboardButton(text="🏫 Xonalarni yangilash")],
         ],
         resize_keyboard=True
     )
