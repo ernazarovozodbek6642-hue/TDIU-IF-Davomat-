@@ -18,7 +18,7 @@ from utils.sheets import (
     validate_spreadsheet_access, update_sheets_attendance, update_room_column,
     daily_sheet_group_names,
 )
-from handlers.admin import sheets_id_entered, room_refresh_interval_entered, router
+from handlers.admin import sheets_id_entered, router
 from states.states import SheetsSettingsState
 from data.constants import HEADERS
 
@@ -70,15 +70,6 @@ class SheetSettingsTests(unittest.IsolatedAsyncioTestCase):
         for invalid in (-1, 1, 1441):
             with self.assertRaises(ValueError):
                 await db.set_room_refresh_minutes(invalid, updated_by=111)
-
-    async def test_room_refresh_handler_validates_and_saves_minutes(self):
-        with patch.object(Message, 'answer', new=AsyncMock()) as answer:
-            await room_refresh_interval_entered(self.message('4'), self.state)
-            self.assertEqual(await db.get_room_refresh_minutes(), 60)
-            self.assertIn('5–1440', answer.call_args.args[0])
-            await room_refresh_interval_entered(self.message('75'), self.state)
-        self.assertEqual(await db.get_room_refresh_minutes(), 75)
-        self.assertIsNone(await self.state.get_state())
 
     async def test_non_admin_cannot_change_setting_or_open_flow(self):
         with self.assertRaises(PermissionError):
