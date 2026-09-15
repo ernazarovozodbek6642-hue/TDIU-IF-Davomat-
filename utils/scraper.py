@@ -58,7 +58,8 @@ def get_driver():
     options.add_argument('--log-level=3')
     options.add_argument('--remote-debugging-pipe')
     options.add_argument('--lang=uz-UZ')
-    options.page_load_strategy = 'eager'
+    # EduPage readiness is checked explicitly; renderer load events may stall.
+    options.page_load_strategy = 'none'
 
     chrome_bin = find_chrome_binary()
     if chrome_bin:
@@ -75,6 +76,22 @@ def get_driver():
     driver.set_page_load_timeout(timeout)
     driver.set_script_timeout(timeout)
     return driver
+
+
+def load_timetable_page(driver, url: str):
+    """Clear the previous group's DOM before waiting for the requested SVG."""
+    timeout = int(os.environ.get('SELENIUM_PAGE_LOAD_TIMEOUT', '45'))
+    driver.get('about:blank')
+    WebDriverWait(driver, timeout).until(
+        lambda d: d.current_url == 'about:blank'
+        and not d.find_elements('css selector', 'svg')
+    )
+    driver.get(url)
+    WebDriverWait(driver, timeout).until(
+        lambda d: d.current_url == url
+        and d.find_elements('css selector', 'svg g > text')
+    )
+    return driver.page_source
 
 
 def _resolve_kafedra(subject_name: str, custom_kafedra_map: dict | None = None) -> str:
@@ -159,9 +176,7 @@ def scrape_one_group_with_driver(
     try:
         if cancel_event is not None and cancel_event.is_set():
             return []
-        driver.get(group['url'])
-        WebDriverWait(driver, 30).until(lambda d: d.find_elements('css selector', 'svg g > text'))
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        soup = BeautifulSoup(load_timetable_page(driver, group['url']), 'html.parser')
         svg = soup.find('svg')
         if not svg:
             raise WebDriverException('EduPage jadval SVG elementi topilmadi')

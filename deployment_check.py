@@ -9,12 +9,11 @@ from pathlib import Path
 from aiogram import Bot
 from bs4 import BeautifulSoup
 from sqlalchemy import text
-from selenium.webdriver.support.ui import WebDriverWait
 
 from data.config import BOT_TOKEN, validate_runtime_config
 from data.edupage_catalog import TIMETABLE_NUM
 from utils.google_credentials import load_google_credentials
-from utils.scraper import find_chrome_binary, get_driver
+from utils.scraper import find_chrome_binary, get_driver, load_timetable_page
 from utils.sheets import SCOPES, _get_gspread_client, validate_spreadsheet_access
 
 
@@ -79,9 +78,7 @@ def check_edupage() -> str:
     driver = get_driver()
     try:
         url = f"https://tsue.edupage.org/timetable/view.php?num={TIMETABLE_NUM}&class=*254"
-        driver.get(url)
-        WebDriverWait(driver, 45).until(lambda d: d.find_elements("css selector", "svg g > text"))
-        svg = BeautifulSoup(driver.page_source, "html.parser").find("svg")
+        svg = BeautifulSoup(load_timetable_page(driver, url), "html.parser").find("svg")
         if svg is None or not svg.select_one("g > text"):
             raise RuntimeError("EduPage jadval SVG elementi topilmadi")
         return "Chromium + ChromeDriver + EduPage: OK"

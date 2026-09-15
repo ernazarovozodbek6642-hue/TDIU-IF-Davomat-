@@ -14,10 +14,11 @@ from utils.timetable_weeks import active_week_slot, day_bounds, cell_week_slot
 
 class Live254Fixture:
     def get(self, url):
+        self.current_url = url
         self.page_source = Path('data/inspect_254_live.html').read_text(encoding='utf-8')
 
     def find_elements(self, *args):
-        return [True]
+        return [] if self.current_url == 'about:blank' else [True]
 
     def quit(self):
         pass

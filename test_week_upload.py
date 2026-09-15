@@ -32,7 +32,7 @@ class WeekScrapeTests(unittest.TestCase):
             week = scrape_week_timetable(datetime(2026, 9, 8), kurs='all')
         self.assertEqual([d.strftime('%Y-%m-%d') for d in week],
                          [f'2026-09-{i:02d}' for i in range(7, 13)])
-        self.assertEqual(driver.get.call_count, 132)
+        self.assertEqual(sum('class=*' in call.args[0] for call in driver.get.call_args_list), 132)
         self.assertEqual({r['Filtr uchun'] for rows in week.values() for r in rows},
                          {'1-kurs', '2-kurs', '3-kurs', '4-kurs'})
         for day, rows in week.items():

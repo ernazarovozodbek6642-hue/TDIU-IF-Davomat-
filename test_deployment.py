@@ -32,6 +32,7 @@ class DeploymentTests(unittest.TestCase):
         service = chrome.call_args.kwargs["service"]
         self.assertEqual(service.path, "/usr/bin/chromedriver")
         self.assertEqual(chrome.call_args.kwargs["options"].binary_location, "/usr/bin/chromium")
+        self.assertEqual(chrome.call_args.kwargs["options"].page_load_strategy, "none")
         driver.set_page_load_timeout.assert_called_once_with(45)
         driver.set_script_timeout.assert_called_once_with(45)
 

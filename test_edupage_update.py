@@ -21,11 +21,15 @@ class CachedDriver:
         pass
 
     def get(self, url):
+        self.current_url = url
+        if url == 'about:blank':
+            self.page_source = '<html></html>'
+            return
         gid = url.split('class=*')[1]
         self.page_source = Path(f'data/edupage_94_pages/{gid}.html').read_text(encoding='utf-8')
 
     def find_elements(self, *args):
-        return [True]
+        return [] if self.current_url == 'about:blank' else [True]
 
 
 class EdupageUpdateTests(unittest.TestCase):
