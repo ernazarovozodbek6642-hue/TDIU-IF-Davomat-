@@ -157,25 +157,14 @@ def scrape_one_group_with_driver(
 ) -> list:
     lessons = []
     try:
-        svg = None
-        for attempt in range(1, 4):
-            if cancel_event is not None and cancel_event.is_set():
-                return []
-            try:
-                driver.get(group['url'])
-                WebDriverWait(driver, 30).until(lambda d: d.find_elements('css selector', 'svg g > text'))
-                soup = BeautifulSoup(driver.page_source, 'html.parser')
-                svg = soup.find('svg')
-                if svg:
-                    break
-            except WebDriverException as exc:
-                logging.warning(
-                    "EduPage urinish %s/3 muvaffaqiyatsiz (%s): %s",
-                    attempt, group['id'], type(exc).__name__,
-                )
-
-        if not svg:
+        if cancel_event is not None and cancel_event.is_set():
             return []
+        driver.get(group['url'])
+        WebDriverWait(driver, 30).until(lambda d: d.find_elements('css selector', 'svg g > text'))
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        svg = soup.find('svg')
+        if not svg:
+            raise WebDriverException('EduPage jadval SVG elementi topilmadi')
 
         resolved_name = (id_to_name_map or {}).get(group['id']) or ID_TO_NAME.get(group['id'], group['id'])
         group_name_svg = resolved_name
@@ -267,9 +256,19 @@ def scrape_one_group_with_driver(
             for period_num in period_numbers:
                 lessons.append({**lesson, 'Juft-lik': period_num})
 
+    except WebDriverException:
+        raise
     except Exception as e:
-        logging.error(f"scrape_one_group xato ({group['id']}): {e}")
+        raise RuntimeError(f"EduPage jadvalini o‘qishda xato (guruh {group['id']})") from e
     return lessons
+
+
+def _close_driver(driver):
+    if driver is not None:
+        try:
+            driver.quit()
+        except Exception:
+            logging.warning('EduPage brauzerini yopishda xato', exc_info=True)
 
 
 def scrape_timetable(
@@ -333,14 +332,35 @@ def scrape_timetable(
                     f"⏳ [{i}/{total}] <b>{gname}</b> tekshirilmoqda..."
                 )
 
-            result = scrape_one_group_with_driver(
-                driver, group, day_name, kafedra_map, id_to_name_map, cancel_event
-            )
+            for attempt in range(1, 4):
+                if cancel_event is not None and cancel_event.is_set():
+                    break
+                try:
+                    if driver is None:
+                        driver = get_driver()
+                    result = scrape_one_group_with_driver(
+                        driver, group, day_name, kafedra_map, id_to_name_map, cancel_event
+                    )
+                    break
+                except WebDriverException as exc:
+                    logging.warning(
+                        'EduPage urinish %s/3 muvaffaqiyatsiz (guruh %s): %s: %s',
+                        attempt, group['id'], type(exc).__name__, str(exc)[:1500],
+                    )
+                    _close_driver(driver)
+                    driver = None
+                    if cancel_event is not None and cancel_event.is_set():
+                        break
+                    if attempt == 3:
+                        raise RuntimeError(
+                            f'EduPage bilan ulanish tiklanmadi (guruh {group["id"]}). '
+                            'Chala jadval yuklanmadi. Keyinroq qayta urinib ko‘ring.'
+                        ) from exc
             if cancel_event is not None and cancel_event.is_set():
                 break
             all_lessons.extend(filter_week_lessons(result, target_date))
     finally:
-        driver.quit()
+        _close_driver(driver)
 
     all_lessons.sort(key=lambda x: (x['Juft-lik'], x['_group_id']))
     for i, lesson in enumerate(all_lessons, 1):
